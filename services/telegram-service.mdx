@@ -1,0 +1,124 @@
+---
+title: "Telegram Service: webhook bot and command handler"
+description: "Spring Boot service on port 8081 that receives Telegram webhooks, routes bot commands via Feign to kpi-service, and replies to users through the Telegram API."
+---
+
+The telegram-service is the user-facing entry point of the OracleTelegramBot backend. It runs on port **8081**, exposes a single webhook endpoint that Telegram calls for every incoming message, parses bot commands, fetches KPI data from the kpi-service, and delivers formatted replies back to users via the Telegram Bot API. No direct database access is performed here — all data comes from the kpi-service.
+
+## Webhook endpoint
+
+The service exposes one HTTP endpoint that must be registered with Telegram so the platform knows where to deliver updates.
+
+**`POST /api/webhook/telegram`**
+
+Telegram sends an `Update` JSON object to this endpoint for every message received by the bot. The controller extracts the `chat_id` and `text` fields, delegates to `TelegramServiceImpl.handleIncomingMessage(chatId, text)`, and returns the string `"OK"`.
+
+### Registering the webhook with Telegram
+
+Use the `setWebhook` method of the Telegram Bot API to point Telegram at your public URL. The service must be reachable over HTTPS.
+
+<Steps>
+  <Step title="Expose the service publicly">
+    Deploy the service or use a tunnelling tool (e.g., ngrok) to obtain a public HTTPS URL such as `https://your-domain.com`.
+  </Step>
+  <Step title="Call setWebhook">
+    Replace `<BOT_TOKEN>` with your bot token and `<YOUR_URL>` with your public base URL.
+
+    ```bash curl
+    curl -X POST "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
+      -H "Content-Type: application/json" \
+      -d '{"url": "https://<YOUR_URL>/api/webhook/telegram"}'
+    ```
+  </Step>
+  <Step title="Confirm registration">
+    Telegram responds with `{"ok": true, "result": true, "description": "Webhook was set"}` on success.
+  </Step>
+</Steps>
+
+## Bot commands
+
+The command router in `TelegramServiceImpl` matches the incoming text case-insensitively using `contains` checks.
+
+| Input text | Trigger condition | Response format | Notes |
+|-----------|------------------|----------------|-------|
+| `hola` | Text contains `"hola"` | Greeting with usage hint | Case-insensitive |
+| `/productividad` | Text contains `"/productividad"` | Formatted productivity KPI | Calls kpi-service project ID 1 |
+| `/eficiencia` | Text contains `"/eficiencia"` | Formatted efficiency KPI | Calls kpi-service project ID 1 |
+| Any other text | No rule matched | Unknown command message | Suggests `/productividad` |
+
+## Command responses
+
+The exact text sent back to the user for each command is shown below.
+
+```text hola
+¡Hola! Usa /productividad o /eficiencia para ver los KPIs
+```
+
+```text /productividad (success)
+Métrica de Productividad
+Resultado: 75.00%
+Estado: Cálculo de productividad exitoso
+```
+
+```text /eficiencia (success)
+Métrica de Eficiencia
+Resultado: 85.00%
+Estado: Ejecucion eficiente
+```
+
+```text kpi-service unavailable
+El microservicio de los KPIs no se encuentra disponible en este momento, intente as tarde.
+```
+
+```text unknown command
+No existe ese comando. Prueba con /productividad.
+```
+
+## How replies are sent
+
+After the command handler builds the reply string, `TelegramServiceImpl.sendToTelegram(chatId, text)` delivers it by POSTing to the Telegram Bot API:
+
+```
+POST https://api.telegram.org/bot{TOKEN}/sendMessage
+```
+
+The request body is serialised from `TelegramResponseDTO` and includes three fields:
+
+```json send message payload
+{
+  "chat_id": 123456789,
+  "text": "Métrica de Productividad\nResultado: 75.00%\nEstado: ...",
+  "parse_mode": "Markdown"
+}
+```
+
+`parse_mode: "Markdown"` is always set, so reply text may use Telegram's Markdown syntax for formatting. Errors from the Telegram API are caught and logged to stderr; they do not propagate to the webhook response.
+
+## Hardcoded project ID
+
+<Warning>
+All KPI queries issued by the bot use project ID **1**, which is hardcoded in `TelegramServiceImpl`. The bot does not accept a project ID from the user's message. Supporting multiple projects requires code changes to the command handler.
+</Warning>
+
+## KPI service dependency
+
+The telegram-service calls the kpi-service using the OpenFeign client `KpiFeignClient`. The base URL is read from the `kpi.service.url` property in `application.properties` (default: `http://localhost:8080/api/kpis`).
+
+Only two of the four available kpi-service endpoints are consumed:
+
+<CardGroup cols={2}>
+  <Card title="/productivity" icon="chart-bar">
+    Called when the user sends `/productividad`. Returns `KpiSimpleDTO` with percentage and status.
+  </Card>
+  <Card title="/efficiency" icon="gauge">
+    Called when the user sends `/eficiencia`. Returns `KpiSimpleDTO` with percentage and status.
+  </Card>
+</CardGroup>
+
+The workload and deadline-compliance endpoints exist in the kpi-service but are not called from the bot. See [Inter-service communication](/services/inter-service-communication) for the full Feign client interface.
+
+## Swagger UI
+
+<Tip>
+Interactive API documentation for the telegram-service is available at `http://localhost:8081/swagger-ui.html` while the service is running.
+</Tip>

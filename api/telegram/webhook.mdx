@@ -1,0 +1,104 @@
+---
+title: 'POST /api/webhook/telegram'
+description: 'Receives incoming Telegram Update objects and routes text commands to the appropriate KPI handler, always responding with HTTP 200 OK.'
+---
+
+The Telegram webhook endpoint is the entry point for all messages forwarded by the Telegram Bot API. When a user sends a message to the bot, Telegram delivers a JSON `Update` object to this URL. The handler inspects the message text, calls the relevant KPI logic, and replies to the user through the Telegram Bot API.
+
+The project ID used for all KPI lookups is hardcoded as `1`.
+
+<Warning>
+  This endpoint has no authentication. Anyone who knows the URL can send arbitrary payloads to it. Keep the webhook URL confidential and rotate it immediately if it is exposed.
+</Warning>
+
+## Endpoint
+
+| Method | Path | Auth |
+|--------|------|------|
+| `POST` | `/api/webhook/telegram` | None |
+
+## Request body
+
+The request body must be a valid Telegram `Update` object as delivered by the Telegram Bot API. The handler reads `update.message.text` to determine routing.
+
+<ParamField body="update_id" type="number" required>
+  Unique identifier for this update. Each subsequent update has a higher ID.
+</ParamField>
+
+<ParamField body="message" type="object" required>
+  The message received by the bot.
+
+  <Expandable title="message properties">
+    <ParamField body="message_id" type="number" required>
+      Unique message identifier within this chat.
+    </ParamField>
+    <ParamField body="from" type="object">
+      Information about the sender.
+    </ParamField>
+    <ParamField body="chat" type="object" required>
+      The chat the message belongs to.
+    </ParamField>
+    <ParamField body="date" type="number" required>
+      Unix timestamp of when the message was sent.
+    </ParamField>
+    <ParamField body="text" type="string">
+      The text content of the message. Used for command routing.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Command routing
+
+The handler performs case-insensitive substring matching on `message.text`:
+
+| Input contains | Action | Bot reply |
+|----------------|--------|-----------|
+| `hola` | Greeting | Sends a welcome message |
+| `/productividad` | KPI lookup | Returns productivity percentage and status for project `1` |
+| `/eficiencia` | KPI lookup | Returns efficiency percentage and status for project `1` |
+
+Any other text returns the fallback reply: `"No existe ese comando. Prueba con /productividad."` The endpoint always returns HTTP `200 OK`.
+
+## Response
+
+The endpoint always responds with HTTP `200` and the plain text body `OK`, regardless of whether the update was acted upon. This is required by the Telegram Bot API — returning any non-2xx status causes Telegram to retry the delivery.
+
+## Examples
+
+<CodeGroup>
+
+```bash Request
+curl --request POST \
+  --url http://localhost:8081/api/webhook/telegram \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "update_id": 123456789,
+    "message": {
+      "message_id": 42,
+      "from": {
+        "id": 987654321,
+        "is_bot": false,
+        "first_name": "Ana",
+        "username": "ana_dev"
+      },
+      "chat": {
+        "id": 987654321,
+        "first_name": "Ana",
+        "username": "ana_dev",
+        "type": "private"
+      },
+      "date": 1744790400,
+      "text": "/productividad"
+    }
+  }'
+```
+
+```text Response
+OK
+```
+
+</CodeGroup>
+
+<Note>
+  Before Telegram can deliver updates to this endpoint, you must register the URL with the Telegram Bot API. See [Telegram bot configuration](/configuration/telegram-bot) for step-by-step instructions.
+</Note>

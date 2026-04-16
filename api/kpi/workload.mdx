@@ -1,0 +1,71 @@
+---
+title: 'GET /api/kpis/usuario/{id}/workload'
+description: 'Returns the workload KPI for a specific user, showing pending and completed task counts alongside the percentage of tasks still in progress.'
+---
+
+The workload endpoint calculates how much of a user's assigned work remains incomplete. The formula is `(pendingTasks / totalTasks) * 100`. Use this KPI to identify overloaded team members or to balance task distribution across a project.
+
+<Note>
+  The `nombreUsuario` field is derived directly from the path parameter — it is always the string `"Usuario"` followed by the user ID (for example, `"Usuario5"`). No user lookup is performed against a user directory.
+</Note>
+
+## Endpoint
+
+| Method | Path | Auth |
+|--------|------|------|
+| `GET` | `/api/kpis/usuario/{id}/workload` | None |
+
+## Path parameters
+
+<ParamField path="id" type="number" required>
+  The numeric identifier of the user whose workload you want to calculate.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="nombreUsuario" type="string" required>
+  Constructed username in the format `"Usuario{id}"`. Not resolved from a user directory.
+</ResponseField>
+
+<ResponseField name="tareasPendientes" type="number" required>
+  Number of tasks assigned to this user that are not yet completed.
+</ResponseField>
+
+<ResponseField name="tareasCompletadas" type="number" required>
+  Number of tasks assigned to this user that have been completed (`idEstado == 4`).
+</ResponseField>
+
+<ResponseField name="porcentajeCarga" type="number" required>
+  Workload expressed as a percentage: `(tareasPendientes / totalTasks) * 100`.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Request
+curl http://localhost:8080/api/kpis/usuario/5/workload
+```
+
+```json Response
+{
+  "nombreUsuario": "Usuario5",
+  "tareasPendientes": 3,
+  "tareasCompletadas": 7,
+  "porcentajeCarga": 30.0
+}
+```
+
+</CodeGroup>
+
+## Error responses
+
+If the user has no tasks assigned, the endpoint returns a `404` with the following shape:
+
+```json 404
+{
+  "timestamp": "2026-04-16T10:00:00.000+00:00",
+  "message": "El usuario con ID 5 no existe o no tiene tareas asociadas.",
+  "status": 404
+}
+```

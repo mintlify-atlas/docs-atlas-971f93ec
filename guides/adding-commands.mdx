@@ -1,0 +1,185 @@
+---
+title: "Add new commands to the Telegram bot"
+description: "Extend the Telegram bot with new commands: understand the if/else routing pattern, wire a new KPI endpoint through the Feign client, and format the reply message."
+---
+
+The Telegram bot handles incoming messages through a single routing method in `TelegramServiceImpl`. Adding a new command means adding a new branch in that method, wiring a new method in the Feign client, and — if the command needs data that does not yet exist — adding a new endpoint to `KpiController`. This page walks through each step.
+
+## How command routing works
+
+When a message arrives at the webhook, `TelegramServiceImpl.handleIncomingMessage()` converts the text to lowercase and runs a series of `contains()` checks against it. This means matching is case-insensitive and does not require an exact match — a message like "What is my /Productividad today" still triggers the productivity branch.
+
+The full routing chain looks like this:
+
+```java
+String lowerText = text.toLowerCase();
+
+if (lowerText.contains("hola")) {
+    sendToTelegram(chatId, "¡Hola! Usa /productividad o /eficiencia para ver los KPIs");
+} else if (lowerText.contains("/productividad")) {
+    KpiSimpleDTO kpi = kpiClient.getProductivity(1L);
+    sendToTelegram(chatId, "Métrica de Productividad\nResultado: "
+        + String.format("%.2f", kpi.getPercentage()) + "%\nEstado: " + kpi.getStatus());
+} else if (lowerText.contains("/eficiencia")) {
+    KpiSimpleDTO kpi = kpiClient.getEfficiency(1L);
+    sendToTelegram(chatId, "Métrica de Eficiencia\nResultado: "
+        + String.format("%.2f", kpi.getPercentage()) + "%\nEstado: " + kpi.getStatus());
+} else {
+    sendToTelegram(chatId, "No existe ese comando. Prueba con /productividad.");
+}
+```
+
+The `else` block at the end is the fallback. Your new branch must be inserted before it.
+
+## Step-by-step: adding a new command
+
+<Steps>
+
+  <Step title="Add a KPI endpoint (if needed)">
+    If the command requires data that no existing endpoint provides, add a new `@GetMapping` to `KpiController` in `kpi-service` and implement the backing logic in `KpiServiceImpl`.
+
+    Follow the existing pattern: inject the relevant `TareaRepository` method, compute the metric, and return a typed DTO wrapped in `ResponseEntity`.
+
+    ```java
+    // KpiController.java
+    @GetMapping("/proyecto/{id}/my-metric")
+    public ResponseEntity<MyMetricDTO> getMyMetric(@PathVariable Long id) {
+        return ResponseEntity.ok(kpiService.getMyMetric(id));
+    }
+    ```
+
+    If the data is already exposed by an existing endpoint (for example `/proyecto/{id}/deadline-compliance`), skip this step.
+  </Step>
+
+  <Step title="Expose it in the Feign client">
+    In `telegram-service`, open `KpiFeignClient` and add a method that maps to the new endpoint path:
+
+    ```java
+    // KpiFeignClient.java
+    @GetMapping("/proyecto/{id}/my-metric")
+    MyMetricDTO getMyMetric(@PathVariable("id") Long id);
+    ```
+
+    The base URL is already configured through `${kpi.service.url}`, so you only need the path relative to `/api/kpis`.
+
+    Also add the corresponding DTO class to `telegram-service` with the same fields as the DTO returned by `kpi-service`. The two services share no code, so the DTO must be duplicated.
+  </Step>
+
+  <Step title="Add the command branch">
+    In `TelegramServiceImpl.handleIncomingMessage()`, insert a new `else if` block before the final `else` fallback:
+
+    ```java
+    } else if (lowerText.contains("/my-command")) {
+        MyMetricDTO result = kpiClient.getMyMetric(1L);
+        sendToTelegram(chatId, "My Metric\nResultado: "
+            + String.format("%.2f", result.getValue()) + "%\nEstado: " + result.getStatus());
+    } else {
+        // existing fallback
+    }
+    ```
+
+    The `contains()` check matches any message that includes your command string. Choose a string that is unlikely to appear in unrelated messages.
+  </Step>
+
+  <Step title="Format the reply">
+    Use `sendToTelegram(chatId, message)` to send the response. The message string is plain text by default, but the service sends with `parse_mode: "Markdown"`, so you can use Telegram Markdown in the string:
+
+    | Syntax | Renders as |
+    |---|---|
+    | `*bold*` | **bold** |
+    | `_italic_` | _italic_ |
+    | `` `code` `` | `code` |
+
+    For multi-line messages, use `\n` as the line separator, as shown in the existing commands.
+  </Step>
+
+  <Step title="Test the new command">
+    Restart `telegram-service` to pick up the code change:
+
+    ```bash
+    cd taskbot-backend/telegram-service
+    ./mvnw spring-boot:run
+    ```
+
+    Open Telegram and send the new command to your bot. Check the `telegram-service` console for any errors from the Feign call. If the KPI service is unreachable, see [Troubleshooting](/guides/troubleshooting).
+  </Step>
+
+</Steps>
+
+## Example: adding a /deadline command
+
+This worked example adds a `/deadline` command that returns deadline compliance data. The endpoint `GET /api/kpis/proyecto/{id}/deadline-compliance` already exists in `kpi-service`, so no changes are needed there.
+
+**1. Add the DTO to telegram-service**
+
+Create `DeadlineComplianceDTO` in `telegram-service` to match the shape returned by `kpi-service`:
+
+```java
+public class DeadlineComplianceDTO {
+    private double compliancePercentage;
+    private int totalTasks;
+    private int delayedTasks;
+    private String statusMessage;
+    // getters and setters
+}
+```
+
+**2. Add the method to KpiFeignClient**
+
+```java
+// KpiFeignClient.java
+@GetMapping("/proyecto/{id}/deadline-compliance")
+DeadlineComplianceDTO getDeadlineCompliance(@PathVariable("id") Long id);
+```
+
+**3. Add the else-if branch in TelegramServiceImpl**
+
+```java
+} else if (lowerText.contains("/deadline")) {
+    DeadlineComplianceDTO kpi = kpiClient.getDeadlineCompliance(1L);
+    sendToTelegram(chatId, "Cumplimiento de Plazos\nResultado: "
+        + String.format("%.2f", kpi.getCompliancePercentage()) + "%\nEstado: " + kpi.getStatusMessage());
+}
+```
+
+Send `/deadline` to the bot and you will receive a reply like:
+
+```
+Cumplimiento de Plazos
+Resultado: 80.00%
+Estado: [+] Mensaje: Buen ritmo de entrega
+```
+
+## Supporting multiple projects
+
+<Note>
+  Project ID is currently hardcoded as `1L` in every command branch. To support multiple projects, you need to parse a project ID from the message text before calling the Feign client.
+
+  For example, a message `/productividad 42` could be parsed with a split or regex to extract `42`, which is then passed as the ID:
+
+  ```java
+  } else if (lowerText.contains("/productividad")) {
+      long projectId = parseProjectId(text, 1L); // fallback to 1 if not provided
+      KpiSimpleDTO kpi = kpiClient.getProductivity(projectId);
+      sendToTelegram(chatId, "Métrica de Productividad\nResultado: "
+          + String.format("%.2f", kpi.getPercentage()) + "%\nEstado: " + kpi.getStatus());
+  }
+  ```
+
+  This change would need to be applied to every command branch that calls the KPI service.
+</Note>
+
+## Reply formatting
+
+The Telegram API call in `sendToTelegram` passes `parse_mode: "Markdown"`, which means you can use Telegram's Markdown subset in any reply string.
+
+Supported syntax:
+
+| Syntax | Result |
+|---|---|
+| `*text*` | Bold text |
+| `_text_` | Italic text |
+| `` `text` `` | Inline code |
+| `` ```text``` `` | Code block |
+
+Newlines in the message string (`\n`) become line breaks in the Telegram chat. Use them to separate labels from values, as the existing commands do.

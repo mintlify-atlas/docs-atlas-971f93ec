@@ -1,0 +1,72 @@
+---
+title: 'GET /api/kpis/proyecto/{id}/deadline-compliance'
+description: 'Returns the deadline compliance KPI for a project, reporting how many tasks with due dates were delivered on time versus delayed.'
+---
+
+The deadline compliance endpoint evaluates how well a project is adhering to its task deadlines. A task is counted as delayed when it is not yet completed (`idEstado != 4`) and its `fechaLimite` falls before today's date. The compliance percentage is `((tasksWithDeadline - delayed) / tasksWithDeadline) * 100`. Only tasks with a non-null `fechaLimite` are included in the calculation.
+
+## Endpoint
+
+| Method | Path | Auth |
+|--------|------|------|
+| `GET` | `/api/kpis/proyecto/{id}/deadline-compliance` | None |
+
+## Path parameters
+
+<ParamField path="id" type="number" required>
+  The numeric identifier of the project whose deadline compliance you want to evaluate.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="compliancePercentage" type="number" required>
+  Percentage of deadline-bound tasks that are on time: `((tasksWithDeadline - delayedTasks) / tasksWithDeadline) * 100`. Returns `100.0` when no tasks have deadlines.
+</ResponseField>
+
+<ResponseField name="totalTasks" type="number" required>
+  Total number of tasks in the project that have a `fechaLimite` set.
+</ResponseField>
+
+<ResponseField name="delayedTasks" type="number" required>
+  Number of tasks that are not completed and whose `fechaLimite` is in the past.
+</ResponseField>
+
+<ResponseField name="statusMessage" type="string" required>
+  Alert or confirmation message based on the compliance score:
+
+  | Condition | Message |
+  |-----------|---------|
+  | `compliancePercentage < 80` | `[!] Alerta: Muchos retrasos` |
+  | `compliancePercentage >= 80` | `[+] Mensaje: Buen ritmo de entrega` |
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Request
+curl http://localhost:8080/api/kpis/proyecto/1/deadline-compliance
+```
+
+```json Response
+{
+  "compliancePercentage": 66.67,
+  "totalTasks": 3,
+  "delayedTasks": 1,
+  "statusMessage": "[!] Alerta: Muchos retrasos"
+}
+```
+
+</CodeGroup>
+
+## Error responses
+
+If the project does not exist or has no tasks at all, the endpoint returns a `404` with the following shape:
+
+```json 404
+{
+  "timestamp": "2026-04-16T10:00:00.000+00:00",
+  "message": "El proyecto con ID 1 no existe o no tiene tareas asociadas.",
+  "status": 404
+}
+```

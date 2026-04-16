@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "OracleTelegramBot Backend",
+  "projectType": "api-service",
+  "projectName": "OracleTelegramBot Backend",
+  "projectDescription": "A Spring Boot microservices backend that powers a Telegram bot for real-time project KPI reporting, backed by an Oracle Autonomous Database.",
   "theme": "luma",
-  "colors": {
-    "primary": "#1B6AC9",
-    "light": "#E8F1FB",
-    "dark": "#0D3E7A"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/OracleTelegramBot/Backend"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/OracleTelegramBot/Backend"
-    }
-  },
+  "primaryColor": "#1B6AC9",
+  "lightColor": "#E8F1FB",
+  "darkColor": "#0D3E7A",
   "navigation": {
     "tabs": [
       {
@@ -78,5 +66,23 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Telegram bot for on-demand project KPI queries via chat commands",
+    "KPI microservice exposing REST endpoints for productivity, efficiency, workload, and deadline compliance",
+    "Oracle Autonomous Database integration with wallet-based mTLS authentication",
+    "Spring Cloud OpenFeign for declarative inter-service HTTP communication",
+    "OpenAPI/Swagger UI auto-documentation via springdoc",
+    "Webhook-based Telegram message processing (no polling)"
+  ],
+  "publicApiSurface": [
+    "GET /api/kpis/proyecto/{idProyecto}/productivity",
+    "GET /api/kpis/proyecto/{id}/efficiency",
+    "GET /api/kpis/usuario/{id}/workload",
+    "GET /api/kpis/proyecto/{id}/deadline-compliance",
+    "POST /api/webhook/telegram",
+    "Telegram command: /productividad",
+    "Telegram command: /eficiencia",
+    "Telegram command: hola"
+  ]
 }

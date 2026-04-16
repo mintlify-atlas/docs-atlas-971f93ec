@@ -1,0 +1,95 @@
+---
+title: "System architecture of OracleTelegramBot Backend"
+description: "A detailed look at the two-microservice design, how data flows from a Telegram message through the webhook and Feign client to Oracle DB, and back to the user."
+---
+
+OracleTelegramBot Backend is split into two autonomous Spring Boot services that communicate over HTTP. The `telegram-service` owns the Telegram integration and delegates all data computation to `kpi-service`, which is the only component that talks to Oracle Autonomous Database. This separation means each service can be deployed, scaled, or updated independently.
+
+## Services overview
+
+| Service | Port | Packaging | Purpose |
+|---|---|---|---|
+| `kpi-service` | 8080 | WAR | Computes KPI metrics by querying the `TAREA` table in Oracle Autonomous Database and exposes them over REST |
+| `telegram-service` | 8081 | JAR | Receives Telegram webhook updates, matches bot commands, calls `kpi-service` via Feign, and replies to the user |
+
+## Data flow
+
+The following steps trace a complete request from the moment a user sends a bot command to when they see the reply.
+
+<Steps>
+  <Step title="User sends a command">
+    A team member opens the Telegram chat with the bot and sends a message such as `/productividad`. Telegram's servers receive the message immediately.
+  </Step>
+  <Step title="Telegram delivers the webhook update">
+    Telegram POSTs a JSON `Update` object to the registered webhook URL, which resolves to `POST /api/webhook/telegram` on the `telegram-service` running on port 8081.
+  </Step>
+  <Step title="telegram-service parses the command">
+    The `TelegramServiceImpl` extracts the message text from the `Update` payload and performs a case-insensitive match against the known commands (`/productividad`, `/eficiencia`, `hola`). Unrecognised text returns an unknown-command message immediately without calling `kpi-service`.
+  </Step>
+  <Step title="Feign client calls kpi-service">
+    For recognised KPI commands, `KpiFeignClient` makes an HTTP GET request to the appropriate `kpi-service` endpoint — for example `GET http://localhost:8080/api/kpis/proyecto/1/productivity` — using the base URL from the `kpi.service.url` configuration property.
+  </Step>
+  <Step title="kpi-service queries Oracle Autonomous Database">
+    The `kpi-service` receives the request, runs a JPA query against the `TAREA` table via `TareaRepository`, computes the requested metric, and returns a DTO with the percentage and a status message.
+  </Step>
+  <Step title="telegram-service formats and sends the reply">
+    `TelegramServiceImpl` receives the DTO, formats it into a human-readable string (for example `Métrica de Productividad\nResultado: 75.00%\nEstado: ...`), and calls the Telegram Bot API to send the message back to the originating chat.
+  </Step>
+  <Step title="User sees the result">
+    The formatted KPI metric appears in the Telegram chat, completing the round trip.
+  </Step>
+</Steps>
+
+## Service communication
+
+The `telegram-service` calls `kpi-service` using **Spring Cloud OpenFeign**. The Feign client interface `KpiFeignClient` declares the HTTP methods and paths; Feign generates the implementation at startup using the base URL from:
+
+```properties
+kpi.service.url=http://localhost:8080/api/kpis
+```
+
+Only two of the four kpi-service endpoints are invoked from the bot today:
+
+- `GET /proyecto/{id}/productivity` — called when the user sends `/productividad`
+- `GET /proyecto/{id}/efficiency` — called when the user sends `/eficiencia`
+
+The `workload` and `deadline-compliance` endpoints exist on `kpi-service` and are fully functional, but they are not currently wired to any bot command. They are accessible directly via the REST API or Swagger UI.
+
+## Database layer
+
+The `kpi-service` maps a single Oracle table, `TAREA`, through a JPA entity class `TareaEntity`. The relevant columns are:
+
+| Column | Type | Description |
+|---|---|---|
+| `idTarea` | number | Primary key |
+| `idProyecto` | number | Links the task to a project |
+| `idEstado` | number | Task status; value `4` means completed |
+| `tiempoEstimado` | number | Estimated hours for the task |
+| `tiempoReal` | number | Actual hours spent |
+| `idUsuario` | number | Owning user |
+| `fechaLimite` | date | Deadline for the task |
+
+The database connection uses **wallet-based mTLS** against Oracle Autonomous Database. The wallet directory is supplied via `oracle.wallet.path`, and the TNS alias `botbd_tp` (defined in `tnsnames.ora` inside the wallet) is used in the JDBC URL:
+
+```
+jdbc:oracle:thin:@botbd_tp?TNS_ADMIN=${oracle.wallet.path}
+```
+
+`spring.jpa.hibernate.ddl-auto=none` ensures the service never attempts to modify the schema at startup.
+
+## Technology stack
+
+| Component | Technology | Version |
+|---|---|---|
+| Application framework | Spring Boot | 4.0.5 |
+| Language | Java | 17 |
+| ORM / data access | Spring Data JPA | (managed by Spring Boot) |
+| Service-to-service HTTP | Spring Cloud OpenFeign | 2025.1.1 |
+| Telegram Bot API client | TelegramBots | 6.8.0 |
+| Oracle JDBC driver | ojdbc11 | (managed by Oracle) |
+| API documentation | springdoc-openapi | 2.5.0 |
+| Boilerplate reduction | Lombok | (managed by Spring Boot) |
+
+## CORS configuration
+
+Both `kpi-service` and `telegram-service` expose a CORS configuration that allows all origins (`*`) with all standard HTTP methods (GET, POST, PUT, DELETE, OPTIONS). Credentials are disabled, meaning the `Access-Control-Allow-Credentials` header is not set. This configuration is suitable for development and internal tooling; restrict origins before exposing either service to the public internet.

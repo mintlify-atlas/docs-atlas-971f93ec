@@ -1,0 +1,148 @@
+---
+title: "KPI Service: project metrics REST API"
+description: "REST API running on port 8080 that computes productivity, efficiency, workload, and deadline-compliance KPIs from an Oracle Autonomous Database."
+---
+
+The kpi-service is the analytical core of the OracleTelegramBot backend. It connects directly to an Oracle Autonomous Database, reads task data from the `TAREA` table, and exposes four REST endpoints that compute project and user-level KPI metrics. The service runs on port **8080** and is consumed by the telegram-service via OpenFeign.
+
+## Endpoints
+
+| Method | Path | Path param | Returns |
+|--------|------|-----------|---------|
+| `GET` | `/api/kpis/proyecto/{idProyecto}/productivity` | `idProyecto` — project ID | Productivity percentage and status |
+| `GET` | `/api/kpis/proyecto/{id}/efficiency` | `id` — project ID | Efficiency percentage and status |
+| `GET` | `/api/kpis/usuario/{id}/workload` | `id` — user ID | Workload percentage and status |
+| `GET` | `/api/kpis/proyecto/{id}/deadline-compliance` | `id` — project ID | Compliance percentage and alert status |
+
+## Productivity metric
+
+Productivity measures the proportion of tasks that have been completed within a project. A task is considered completed when its `idEstado` field equals `4`. The formula is:
+
+```
+productivityPercentage = (completedTasks / totalTasks) * 100
+```
+
+where `completedTasks` is the count of rows with `idEstado == 4` returned by `TareaRepository.findByIdProyecto(idProyecto)`.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET http://localhost:8080/api/kpis/proyecto/1/productivity
+```
+
+```json response
+{
+  "productivityPercentage": 75.0,
+  "statusMessage": "Cálculo de productividad exitoso"
+}
+```
+
+</CodeGroup>
+
+## Efficiency metric
+
+Efficiency compares estimated time against the actual time spent across all tasks in a project. The formula is:
+
+```
+efficiencyPercentage = (totalEstimado / totalReal) * 100
+```
+
+where `totalEstimado` is the sum of `tiempoEstimado` and `totalReal` is the sum of `tiempoReal` for all tasks in the project.
+
+- A result **above 100%** means the project was completed faster than estimated: status `"Ejecucion eficiente"`.
+- A result **below 100%** means actual time exceeded estimates: status `"Retraso detectado"`.
+
+<CodeGroup>
+
+```bash curl
+curl -X GET http://localhost:8080/api/kpis/proyecto/1/efficiency
+```
+
+```json response
+{
+  "efficiencyPercentage": 85.0,
+  "statusMessage": "Retraso detectado"
+}
+```
+
+</CodeGroup>
+
+## Workload metric
+
+Workload is calculated per user and indicates what proportion of their assigned tasks remain pending (not completed). The formula is:
+
+```
+workloadPercentage = (pendingTasks / totalTasks) * 100
+```
+
+where `pendingTasks` is the count of tasks for the user where `idEstado != 4`, retrieved via `TareaRepository.findByIdUsuario(idUsuario)`.
+
+<Note>
+The `nombreUsuario` field is returned as `"Usuario{id}"` because the kpi-service does not perform a user lookup — it constructs the label directly from the path parameter.
+</Note>
+
+<CodeGroup>
+
+```bash curl
+curl -X GET http://localhost:8080/api/kpis/usuario/3/workload
+```
+
+```json response
+{
+  "nombreUsuario": "Usuario3",
+  "tareasPendientes": 6,
+  "tareasCompletadas": 4,
+  "porcentajeCarga": 60.0
+}
+```
+
+</CodeGroup>
+
+## Deadline compliance metric
+
+Deadline compliance measures the proportion of tasks that have not missed their deadline within a project. A task is considered **delayed** when it is not completed (`idEstado != 4`) and its `fechaLimite` is in the past. The formula is:
+
+```
+compliancePercentage = ((tasksWithDeadline - delayedTasks) / tasksWithDeadline) * 100
+```
+
+Only tasks that have a non-null `fechaLimite` are included in the calculation.
+
+<Warning>
+If the compliance percentage falls below **80%**, the service appends an alert to the status message to indicate the project is at risk.
+</Warning>
+
+<CodeGroup>
+
+```bash curl
+curl -X GET http://localhost:8080/api/kpis/proyecto/1/deadline-compliance
+```
+
+```json response
+{
+  "compliancePercentage": 66.67,
+  "totalTasks": 6,
+  "delayedTasks": 2,
+  "statusMessage": "[!] Alerta: Muchos retrasos"
+}
+```
+
+</CodeGroup>
+
+## Error handling
+
+When a project or user ID is not found in the database, the service throws a `ResourceNotFoundException`, which is mapped to HTTP **404**. The response body follows a consistent error envelope:
+
+```json error response
+{
+  "timestamp": "2026-04-16T10:30:00.000+00:00",
+  "message": "El proyecto con ID 99 no existe o no tiene tareas asociadas.",
+  "status": 404
+}
+```
+
+## Swagger UI
+
+<Tip>
+Interactive API documentation is available at `http://localhost:8080/swagger-ui.html` while the service is running. All four endpoints can be tested directly from the browser.
+</Tip>

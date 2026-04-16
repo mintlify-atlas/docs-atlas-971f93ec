@@ -1,0 +1,57 @@
+---
+title: 'GET /api/kpis/proyecto/{id}/efficiency'
+description: 'Returns the time efficiency KPI for a project, comparing estimated hours against actual hours logged, with a status indicating delays.'
+---
+
+The efficiency endpoint measures how closely a project's actual time expenditure matches its original estimates. The formula is `(totalEstimado / totalReal) * 100`. A score at or above 100% means work was completed within the estimated time; a score below 100% indicates delays.
+
+<Note>
+  This endpoint does not throw a `404`. When no estimated time data exists for the project's tasks (`tiempoEstimado` is null or zero for all tasks), it returns `0.0` with the message `No hay tiempos estimados cargados` instead of an error.
+</Note>
+
+## Endpoint
+
+| Method | Path | Auth |
+|--------|------|------|
+| `GET` | `/api/kpis/proyecto/{id}/efficiency` | None |
+
+## Path parameters
+
+<ParamField path="id" type="number" required>
+  The numeric identifier of the project whose time efficiency you want to calculate.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="efficiencyPercentage" type="number" required>
+  Efficiency expressed as a percentage: `(totalEstimado / totalReal) * 100`. Returns `0.0` when `totalReal` is zero.
+</ResponseField>
+
+<ResponseField name="statusMessage" type="string" required>
+  Human-readable interpretation of the efficiency score:
+
+  | Condition | Message |
+  |-----------|---------|
+  | `totalEstimado == 0` | `No hay tiempos estimados cargados` |
+  | `efficiencyPercentage >= 100` | `Ejecucion eficiente` |
+  | `efficiencyPercentage < 100` | `Retraso detectado` |
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Request
+curl http://localhost:8080/api/kpis/proyecto/1/efficiency
+```
+
+```json Response
+{
+  "efficiencyPercentage": 85.5,
+  "statusMessage": "Retraso detectado"
+}
+```
+
+</CodeGroup>
+
+

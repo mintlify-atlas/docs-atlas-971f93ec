@@ -1,0 +1,54 @@
+---
+title: "Environment variables and configuration reference"
+description: "Complete reference of all application.properties settings for kpi-service and telegram-service, with guidance on overriding them via environment variables."
+---
+
+Both services are configured through their respective `application.properties` files located at `src/main/resources/application.properties` in each service module. For local development the defaults in those files are sufficient, but for any shared, staging, or production environment you should supply sensitive values — database credentials and the bot token — via environment variables rather than storing them in the properties files.
+
+## kpi-service properties
+
+| Property | Required | Default | Description |
+|---|---|---|---|
+| `oracle.wallet.path` | Yes | — | Absolute path to the directory containing the Oracle wallet files (e.g., `/opt/oracle/wallet`). |
+| `spring.datasource.url` | Yes | — | JDBC URL referencing the `botbd_tp` TNS alias and the wallet path via `TNS_ADMIN`. Example: `jdbc:oracle:thin:@botbd_tp?TNS_ADMIN=${oracle.wallet.path}`. |
+| `spring.datasource.username` | Yes | — | Oracle database username with access to the `TAREA` table. |
+| `spring.datasource.password` | Yes | — | Password for the Oracle database user. |
+| `spring.datasource.driver-class-name` | Yes | `oracle.jdbc.OracleDriver` | JDBC driver class. Must be `oracle.jdbc.OracleDriver` (ojdbc11). |
+| `spring.jpa.hibernate.ddl-auto` | No | `none` | Controls Hibernate schema management. Set to `none` to prevent any table creation or alteration. |
+| `spring.jpa.show-sql` | No | `true` | When `true`, logs every SQL statement to stdout. Disable in production. |
+
+## telegram-service properties
+
+| Property | Required | Default | Description |
+|---|---|---|---|
+| `kpi.service.url` | Yes | `http://localhost:8080/api/kpis` | Base URL used by telegram-service to fetch KPI data from kpi-service. Update this when the services run on separate hosts. |
+| `telegram.bot.token` | Yes | — | Bot authentication token obtained from BotFather. Used to authenticate all calls to the Telegram Bot API. |
+| `server.port` | No | `8081` | HTTP port telegram-service listens on. Change this if 8081 is already in use. |
+
+## Overriding with environment variables
+
+Spring Boot automatically maps environment variables to property names by converting dots and hyphens to underscores and uppercasing the result. For example:
+
+| Property | Environment variable |
+|---|---|
+| `spring.datasource.username` | `SPRING_DATASOURCE_USERNAME` |
+| `spring.datasource.password` | `SPRING_DATASOURCE_PASSWORD` |
+| `oracle.wallet.path` | `ORACLE_WALLET_PATH` |
+| `telegram.bot.token` | `TELEGRAM_BOT_TOKEN` |
+
+Set these before starting the services:
+
+```bash
+export SPRING_DATASOURCE_USERNAME=myuser
+export SPRING_DATASOURCE_PASSWORD=mypassword
+export ORACLE_WALLET_PATH=/opt/oracle/wallet
+export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+```
+
+When an environment variable is present, it takes precedence over the value in `application.properties`.
+
+## Security note
+
+<Warning>
+  Do not commit database credentials or the Telegram bot token to version control. In any non-local environment, provide `spring.datasource.username`, `spring.datasource.password`, and `telegram.bot.token` via environment variables or a secrets manager (e.g., HashiCorp Vault, AWS Secrets Manager, or your CI/CD platform's secret store). Leaving credentials in `application.properties` and committing that file exposes them to anyone with repository access.
+</Warning>

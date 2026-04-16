@@ -1,0 +1,57 @@
+---
+title: 'GET /api/kpis/proyecto/{id}/productivity'
+description: 'Returns the productivity KPI for a project as a percentage of completed tasks out of total tasks, with a human-readable status message.'
+---
+
+The productivity endpoint calculates what percentage of a project's tasks have been completed. A task counts as completed when its `idEstado` equals `4`. The result is expressed as a percentage and accompanied by a status message that reflects the project's overall health.
+
+## Endpoint
+
+| Method | Path | Auth |
+|--------|------|------|
+| `GET` | `/api/kpis/proyecto/{id}/productivity` | None |
+
+## Path parameters
+
+<ParamField path="id" type="number" required>
+  The numeric identifier of the project whose productivity you want to calculate.
+</ParamField>
+
+## Response fields
+
+<ResponseField name="productivityPercentage" type="number" required>
+  Productivity expressed as a percentage: `(completedTasks / totalTasks) * 100`. Completed tasks are those with `idEstado == 4`.
+</ResponseField>
+
+<ResponseField name="statusMessage" type="string" required>
+  A confirmation message returned when the calculation succeeds: `Cálculo de productividad exitoso`.
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```bash Request
+curl http://localhost:8080/api/kpis/proyecto/1/productivity
+```
+
+```json Response
+{
+  "productivityPercentage": 75.0,
+  "statusMessage": "Cálculo de productividad exitoso"
+}
+```
+
+</CodeGroup>
+
+## Error responses
+
+If the project does not exist or has no tasks, the endpoint returns a `404` with the following shape:
+
+```json 404
+{
+  "timestamp": "2026-04-16T10:00:00.000+00:00",
+  "message": "El proyecto con ID 1 no existe o no tiene tareas asociadas.",
+  "status": 404
+}
+```

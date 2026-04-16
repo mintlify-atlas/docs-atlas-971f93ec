@@ -1,0 +1,188 @@
+---
+title: "Deploy OracleTelegramBot Backend services"
+description: "Run both Spring Boot services locally with an Oracle DB wallet and Telegram token, then build production artifacts and register the Telegram webhook over HTTPS."
+---
+
+OracleTelegramBot Backend consists of two independently deployable Spring Boot services. You can run them side by side on a development machine with minimal configuration, or build production-ready artifacts and host them on a server. This page covers both paths, from local startup to production deployment, along with WAR deployment to an external Tomcat server.
+
+## Prerequisites
+
+Before deploying either service, make sure the following are available:
+
+- **Java 17 or later** — both services target Java 17.
+- **Apache Maven 3.8+** — the `./mvnw` wrapper is included in each service directory.
+- **Oracle Autonomous Database wallet** — download the wallet ZIP from your Oracle Cloud console and unzip it to a local directory. You will need the absolute path to that directory.
+- **Telegram bot token** — create a bot through [@BotFather](https://t.me/BotFather). The token is in the format `123456789:AAF...`.
+- **A publicly accessible HTTPS host** — Telegram only delivers webhook updates to HTTPS endpoints. Use [ngrok](https://ngrok.com) for local development or a server with a valid TLS certificate for production.
+
+## Running locally
+
+<Steps>
+
+  <Step title="Configure kpi-service">
+    Open `taskbot-backend/kpi-service/src/main/resources/application.properties` and set the wallet path and database credentials:
+
+    ```properties kpi-service/src/main/resources/application.properties
+    spring.application.name=kpi
+
+    # Absolute path to the directory where you unzipped the Oracle wallet
+    oracle.wallet.path=/home/user/wallet/Wallet_botbd
+
+    spring.datasource.url=jdbc:oracle:thin:@botbd_tp?TNS_ADMIN=${oracle.wallet.path}
+    spring.datasource.username=YOUR_DB_USERNAME
+    spring.datasource.password=YOUR_DB_PASSWORD
+
+    spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
+    spring.jpa.hibernate.ddl-auto=none
+    spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.OracleDialect
+    spring.jpa.show-sql=true
+    ```
+
+    Replace `/home/user/wallet/Wallet_botbd` with the actual path on your machine, and set `YOUR_DB_USERNAME` and `YOUR_DB_PASSWORD` to your Oracle credentials.
+  </Step>
+
+  <Step title="Configure telegram-service">
+    Open `taskbot-backend/telegram-service/src/main/resources/application.properties` and set the bot token and KPI service URL:
+
+    ```properties telegram-service/src/main/resources/application.properties
+    spring.application.name=telegram
+
+    # Base URL of the running kpi-service
+    kpi.service.url=http://localhost:8080/api/kpis
+
+    # Token provided by BotFather
+    telegram.bot.token=YOUR_BOT_TOKEN
+
+    # telegram-service listens on 8081 to avoid conflicting with kpi-service
+    server.port=8081
+    ```
+
+    Replace `YOUR_BOT_TOKEN` with the token from BotFather.
+  </Step>
+
+  <Step title="Start kpi-service">
+    In a terminal, navigate to the `kpi-service` directory and start the service in development mode:
+
+    ```bash
+    cd taskbot-backend/kpi-service
+    ./mvnw spring-boot:run
+    ```
+
+    The service starts on port **8080**. Wait for `Started KpiApplication in X.XXX seconds` in the console output.
+  </Step>
+
+  <Step title="Start telegram-service">
+    Open a second terminal, navigate to `telegram-service`, and start it:
+
+    ```bash
+    cd taskbot-backend/telegram-service
+    ./mvnw spring-boot:run
+    ```
+
+    The service starts on port **8081**. Confirm you see `Started TelegramApplication in X.XXX seconds`.
+  </Step>
+
+  <Step title="Expose telegram-service via ngrok">
+    Telegram must be able to reach the webhook over HTTPS. Start an ngrok tunnel pointed at port 8081:
+
+    ```bash
+    ngrok http 8081
+    ```
+
+    ngrok prints a public HTTPS URL such as `https://abc123.ngrok-free.app`. Copy it — you need it in the next step.
+  </Step>
+
+  <Step title="Register the webhook">
+    Tell Telegram where to deliver updates. Replace `<TOKEN>` with your bot token and `<ngrok-url>` with the URL from the previous step:
+
+    ```bash
+    curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<ngrok-url>/api/webhook/telegram"
+    ```
+
+    A successful response looks like:
+
+    ```json
+    {"ok":true,"result":true,"description":"Webhook was set"}
+    ```
+
+    Telegram now POSTs every incoming message to `telegram-service` at `/api/webhook/telegram`.
+  </Step>
+
+</Steps>
+
+## Building production artifacts
+
+Run the Maven build with tests skipped from inside each service directory.
+
+**kpi-service** (produces a WAR):
+
+```bash
+cd taskbot-backend/kpi-service
+./mvnw clean package -DskipTests
+```
+
+The artifact is written to `target/kpi-0.0.1-SNAPSHOT.war`. Run it directly with the embedded server:
+
+```bash
+java -jar target/kpi-0.0.1-SNAPSHOT.war
+```
+
+**telegram-service** (produces a JAR):
+
+```bash
+cd taskbot-backend/telegram-service
+./mvnw clean package -DskipTests
+```
+
+The artifact is written to `target/telegram-0.0.1-SNAPSHOT.jar`. Start it:
+
+```bash
+java -jar target/telegram-0.0.1-SNAPSHOT.jar
+```
+
+## Deploying kpi-service as a WAR
+
+kpi-service uses WAR packaging and includes a `ServletInitializer` class that extends `SpringBootServletInitializer`. This means the WAR can be deployed to an external Apache Tomcat server instead of relying on the embedded server.
+
+To deploy to Tomcat:
+
+1. Build the WAR as shown above.
+2. Copy `target/kpi-0.0.1-SNAPSHOT.war` into Tomcat's `webapps/` directory.
+3. Start or restart Tomcat. Tomcat unpacks and deploys the WAR automatically.
+
+<Note>
+  Spring Boot 3.x (and the 4.0.5 branch used here) requires **Tomcat 10.x or later** because of the Jakarta EE namespace migration. Tomcat 9.x and earlier are not compatible.
+</Note>
+
+## Environment variable overrides
+
+Any property in `application.properties` can be overridden at runtime with an environment variable. Spring Boot converts property names to uppercase with underscores, so `spring.datasource.password` becomes `SPRING_DATASOURCE_PASSWORD`.
+
+Example — override the database password without editing the properties file:
+
+```bash
+export SPRING_DATASOURCE_PASSWORD=my-secure-password
+java -jar target/kpi-0.0.1-SNAPSHOT.war
+```
+
+See [/configuration/environment-variables](/configuration/environment-variables) for the full list of configurable properties and their corresponding environment variable names.
+
+## Health check
+
+kpi-service includes Spring Actuator. Once the service is running, verify it is healthy:
+
+```bash
+GET http://localhost:8080/actuator/health
+```
+
+A healthy response:
+
+```json
+{"status":"UP"}
+```
+
+If the response shows `DOWN` or the request fails, check the database connection configuration and wallet path.
+
+<Warning>
+  The webhook URL must use HTTPS. Telegram does not deliver updates to plain HTTP endpoints or to `localhost`. Always use a valid TLS certificate or an HTTPS tunnel such as ngrok when registering the webhook.
+</Warning>

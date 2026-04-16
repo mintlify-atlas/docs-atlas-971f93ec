@@ -1,0 +1,62 @@
+---
+title: "OracleTelegramBot Backend: what it is and how it works"
+description: "Two-service Spring Boot backend that computes project KPIs from Oracle Autonomous Database and delivers them through a Telegram bot webhook integration."
+---
+
+OracleTelegramBot Backend is a Spring Boot microservices project built for development teams who want real-time project health data without leaving Telegram. It connects an Oracle Autonomous Database containing task records to a Telegram bot, so engineers and managers can query productivity, efficiency, workload, and deadline compliance by sending a simple chat command.
+
+## What is OracleTelegramBot Backend?
+
+The backend is composed of two independently deployable Spring Boot services that work together:
+
+- **kpi-service** (port 8080) — reads task data from the `TAREA` table in Oracle Autonomous Database and exposes four REST endpoints that compute KPI metrics on demand. It connects to the database over wallet-based mTLS, so no credentials travel in plaintext.
+- **telegram-service** (port 8081) — registers a Telegram webhook and receives incoming bot messages. When a recognised command arrives, it calls `kpi-service` via an OpenFeign HTTP client, formats the metric result, and sends it back to the user through the Telegram API.
+
+The two services communicate only over HTTP; the telegram-service never touches the database directly.
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="Four KPI metrics" icon="chart-line">
+    Productivity, efficiency, user workload, and deadline compliance — each computed from live task data stored in Oracle DB.
+  </Card>
+  <Card title="Oracle Autonomous Database" icon="database">
+    Connects via wallet-based mTLS using a TNS alias. No plaintext credentials on the wire and no schema management at startup.
+  </Card>
+  <Card title="Telegram webhook bot" icon="bolt">
+    Push-based architecture with no polling loop. Telegram delivers updates directly to the webhook endpoint as they arrive.
+  </Card>
+  <Card title="Swagger UI on both services" icon="file-code">
+    springdoc-openapi generates interactive API documentation at `/swagger-ui.html` on each service automatically.
+  </Card>
+</CardGroup>
+
+## Available KPI metrics
+
+| Metric | Endpoint | Description |
+|---|---|---|
+| Productivity | `GET /api/kpis/proyecto/{id}/productivity` | Percentage of tasks completed relative to total tasks for a project |
+| Efficiency | `GET /api/kpis/proyecto/{id}/efficiency` | Ratio of estimated time to actual time spent across project tasks |
+| User workload | `GET /api/kpis/usuario/{id}/workload` | Pending and completed task counts plus load percentage for a user |
+| Deadline compliance | `GET /api/kpis/proyecto/{id}/deadline-compliance` | Percentage of tasks completed on time versus total and delayed counts |
+
+## Bot commands
+
+The Telegram bot uses case-insensitive text matching. There are no slash-command registrations required beyond the webhook.
+
+| Command | Action |
+|---|---|
+| `/productividad` | Queries the productivity KPI for project ID 1 and replies with the percentage and status |
+| `/eficiencia` | Queries the efficiency KPI for project ID 1 and replies with the percentage and status |
+| `hola` | Returns a greeting and a usage hint listing the available commands |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, configure both services, and send your first bot command.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Explore the data flow, service communication layer, and database design.
+  </Card>
+</CardGroup>

@@ -1,0 +1,81 @@
+---
+title: "Inter-service communication with OpenFeign"
+description: "How telegram-service calls kpi-service using a declarative OpenFeign client, including the client interface, KpiSimpleDTO, configuration, and error handling."
+---
+
+The OracleTelegramBot backend consists of two independent Spring Boot services that communicate over HTTP. When the telegram-service needs KPI data, it does not call the Oracle database directly — instead, it delegates to the kpi-service via a declarative HTTP client built with Spring Cloud OpenFeign. This keeps the services loosely coupled and ensures that each service has a single, well-defined responsibility.
+
+## OpenFeign client
+
+The `KpiFeignClient` interface is declared in the telegram-service and annotated with `@FeignClient`. Spring Cloud generates a runtime implementation that translates each method call into an outbound HTTP request to the kpi-service.
+
+```java KpiFeignClient.java
+@FeignClient(name = "kpi-client", url = "${kpi.service.url}")
+public interface KpiFeignClient {
+
+    @GetMapping("/proyecto/{id}/productivity")
+    KpiSimpleDTO getProductivity(@PathVariable("id") Long id);
+
+    @GetMapping("/proyecto/{id}/efficiency")
+    KpiSimpleDTO getEfficiency(@PathVariable("id") Long id);
+}
+```
+
+The `url` attribute is resolved at startup from the `kpi.service.url` property, so no service discovery infrastructure is required.
+
+## KpiSimpleDTO
+
+The telegram-service deserialises kpi-service responses into `KpiSimpleDTO`, a lightweight DTO that carries only the two fields the bot needs to build its reply message.
+
+```java KpiSimpleDTO.java
+public class KpiSimpleDTO {
+    private Double percentage;
+    private String status;
+
+    // getters and setters
+}
+```
+
+The kpi-service returns richer response objects for some endpoints (e.g., workload includes `idUsuario` and `nombreUsuario`), but the telegram-service only ever consumes `percentage` and `status`, so `KpiSimpleDTO` provides a simplified, stable view.
+
+## Configuration
+
+The base URL for the kpi-service is set in the telegram-service's `application.properties`:
+
+```properties application.properties
+kpi.service.url=http://localhost:8080/api/kpis
+```
+
+Change this value when deploying to environments where the kpi-service runs at a different host or port (for example, within a Docker network where the hostname is the container name).
+
+## Error handling
+
+If the kpi-service is unavailable or returns an error, Feign throws an exception. `TelegramServiceImpl` wraps each Feign call in a try-catch block. When an exception is caught, the bot sends the following message to the user instead of the KPI data:
+
+```text service unavailable message
+El microservicio de los KPIs no se encuentra disponible en este momento, intente as tarde.
+```
+
+Errors are logged to stderr for operator visibility but are not re-thrown, so a kpi-service outage does not crash the telegram-service or prevent it from responding to Telegram.
+
+## Which endpoints are called
+
+<Note>
+The Feign client only exposes `getProductivity` and `getEfficiency`. The kpi-service also provides workload (`/usuario/{id}/workload`) and deadline-compliance (`/proyecto/{id}/deadline-compliance`) endpoints, but these are not wired into the bot and cannot be triggered by any bot command without adding new methods to `KpiFeignClient` and new command-handling logic in `TelegramServiceImpl`.
+</Note>
+
+## Enabling Feign
+
+Feign client scanning is activated by the `@EnableFeignClients` annotation on the telegram-service's main application class:
+
+```java TelegramApplication.java
+@SpringBootApplication
+@EnableFeignClients
+public class TelegramApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(TelegramApplication.class, args);
+    }
+}
+```
+
+Without this annotation, Spring Boot will not scan for `@FeignClient` interfaces and the `KpiFeignClient` bean will not be created, causing a startup failure.

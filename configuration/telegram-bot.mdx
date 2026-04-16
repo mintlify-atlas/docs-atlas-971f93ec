@@ -1,0 +1,97 @@
+---
+title: "Configure your Telegram bot and webhook"
+description: "Create a Telegram bot via BotFather, set the bot token in application.properties, and register a webhook URL to receive incoming messages."
+---
+
+The telegram-service needs two things to operate: a bot token that authenticates outgoing API calls to Telegram, and a registered webhook URL so Telegram knows where to deliver incoming messages. The token is issued by BotFather — Telegram's official bot for managing bots — and the webhook is registered by making a single API call with your public HTTPS URL.
+
+## Creating a Telegram bot
+
+<Steps>
+  <Step title="Open BotFather">
+    Open Telegram (desktop or mobile) and search for `@BotFather`. Start a conversation with it.
+  </Step>
+  <Step title="Create a new bot">
+    Send the command `/newbot`. BotFather will ask you to choose a display name and then a username. The username must end in `bot` (e.g., `OracleKpiBot`).
+  </Step>
+  <Step title="Copy your token">
+    After you confirm the username, BotFather replies with your bot token. It looks like:
+
+    ```
+    123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+    ```
+
+    Copy this value — you will need it in the next section.
+  </Step>
+</Steps>
+
+## Configuring the token
+
+Add the token to `telegram-service/src/main/resources/application.properties`:
+
+```properties
+telegram.bot.token=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+```
+
+The `telegrambots-spring-boot-starter` (v6.8.0) reads this property to authenticate all outgoing requests to `https://api.telegram.org`.
+
+<Warning>
+  Never commit the real bot token to version control. Anyone with the token can send messages as your bot and intercept webhook deliveries. Use an environment variable (`TELEGRAM_BOT_TOKEN`) or a secrets manager in any shared or production environment.
+</Warning>
+
+## Registering the webhook
+
+Telegram pushes incoming messages to your service by making POST requests to a URL you register. You register that URL once by calling Telegram's `setWebhook` endpoint.
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_PUBLIC_HOST>/api/webhook/telegram"
+```
+
+Replace `<YOUR_TOKEN>` with your bot token and `<YOUR_PUBLIC_HOST>` with the publicly reachable hostname of the server running telegram-service (port 8081).
+
+<Note>
+  The webhook URL must be publicly accessible over HTTPS. Telegram does not deliver webhook events to `localhost` or plain HTTP endpoints. For local development, use a tunneling tool like ngrok to expose port 8081:
+
+  ```bash
+  ngrok http 8081
+  ```
+
+  ngrok prints an HTTPS forwarding URL such as `https://abc123.ngrok.io`. Use that as your `<YOUR_PUBLIC_HOST>` when calling `setWebhook`.
+</Note>
+
+## Verifying the webhook
+
+After registration, confirm Telegram accepted the webhook:
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
+```
+
+A successful response looks like:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "url": "https://your-public-host/api/webhook/telegram",
+    "has_custom_certificate": false,
+    "pending_update_count": 0,
+    "last_error_date": null,
+    "last_error_message": null,
+    "max_connections": 40,
+    "allowed_updates": []
+  }
+}
+```
+
+If `url` is empty or `last_error_message` is set, the webhook was not registered correctly or Telegram cannot reach the endpoint.
+
+## Removing the webhook
+
+To stop Telegram from delivering updates to your endpoint — for example, before switching to polling during development — delete the webhook:
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/deleteWebhook"
+```
+
+Telegram responds with `{"ok":true,"result":true,"description":"Webhook was deleted"}` on success.

@@ -1,97 +1,64 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "OracleTelegramBot Backend: KPI reporting via Telegram"
+description: "Spring Boot microservices backend that powers a Telegram bot for real-time project KPI queries, backed by an Oracle Autonomous Database."
 ---
 
-## Setting up
+OracleTelegramBot Backend is a two-service Spring Boot application that lets your team query live project KPIs directly from Telegram. The **KPI service** computes productivity, efficiency, workload, and deadline compliance from an Oracle Autonomous Database. The **Telegram service** handles incoming bot messages and routes commands to the KPI service via OpenFeign, then sends formatted replies back to users.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get both services running and send your first KPI query in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how the two microservices interact and how data flows.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API Reference" icon="code" href="/api/kpi/productivity">
+    Explore all REST endpoints with request parameters and response schemas.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Telegram Bot Commands" icon="telegram" href="/services/telegram-service">
+    Learn the available bot commands and how to extend them.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+The backend is split into two independent Spring Boot services:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+<Steps>
+  <Step title="User sends a Telegram message">
+    A team member sends `/productividad` or `/eficiencia` to the bot. Telegram delivers the message to the webhook endpoint on the **telegram-service** (port 8081).
+  </Step>
+  <Step title="Telegram service routes the command">
+    The `TelegramServiceImpl` matches the command text and calls the **kpi-service** via a Feign HTTP client on the configured URL.
+  </Step>
+  <Step title="KPI service queries Oracle">
+    The **kpi-service** (port 8080) fetches task data from the `TAREA` table in Oracle Autonomous Database and returns a computed KPI metric.
+  </Step>
+  <Step title="Bot replies with the result">
+    The telegram-service formats the percentage and status message, then POSTs it back to the Telegram API so the user sees the result in chat.
+  </Step>
+</Steps>
 
-## Need inspiration?
+## Key features
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Four KPI metrics" icon="chart-line">
+    Productivity, efficiency, user workload, and deadline compliance — each computed from live task data.
+  </Card>
+  <Card title="Oracle Autonomous DB" icon="database">
+    Connects via wallet-based mTLS to Oracle Autonomous Database with no plaintext credentials on the wire.
+  </Card>
+  <Card title="Webhook-based bot" icon="bolt">
+    Push-based architecture — no polling loop. Telegram sends updates directly to the service endpoint.
+  </Card>
+  <Card title="OpenAPI / Swagger UI" icon="file-code">
+    Both services expose interactive Swagger UI at `/swagger-ui.html` via springdoc-openapi.
+  </Card>
+</CardGroup>
+
+## Services at a glance
+
+| Service | Port | Purpose |
+|---|---|---|
+| `kpi-service` | 8080 | Computes and serves KPI metrics from Oracle DB |
+| `telegram-service` | 8081 | Receives Telegram webhooks and relays KPI data |

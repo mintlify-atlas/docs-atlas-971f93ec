@@ -1,0 +1,88 @@
+---
+title: "Connect to Oracle Autonomous Database"
+description: "Set up Oracle wallet-based mTLS authentication, configure your TNS alias, and wire datasource properties for the kpi-service."
+---
+
+The kpi-service reads project task data from an Oracle Autonomous Database to compute KPI metrics. Oracle Autonomous Database requires mutual TLS (mTLS) authentication via a wallet — a ZIP archive containing certificates and connection descriptors that prove your client's identity to the server. You download the wallet from Oracle Cloud Console, place it on the server running kpi-service, and point the JDBC URL to it via the `TNS_ADMIN` parameter.
+
+## Prerequisites
+
+Before configuring the datasource you need:
+
+- An Oracle Autonomous Database instance provisioned in Oracle Cloud.
+- The wallet ZIP downloaded from the Oracle Cloud Console (Database Connection → Download Wallet).
+- The TNS alias for your database — this project uses `botbd_tp`.
+- A database username and password with SELECT access to the `TAREA` table.
+
+## Installing the wallet
+
+<Steps>
+  <Step title="Download the wallet ZIP">
+    In the Oracle Cloud Console, navigate to your Autonomous Database instance. Click **Database connection**, then click **Download wallet**. Set a wallet password when prompted and save the ZIP file.
+  </Step>
+  <Step title="Unzip to a local directory">
+    Extract the wallet to a permanent directory on the host running kpi-service. A conventional location is `/opt/oracle/wallet`.
+
+    ```bash
+    sudo mkdir -p /opt/oracle/wallet
+    sudo unzip Wallet_botbd.zip -d /opt/oracle/wallet
+    ```
+  </Step>
+  <Step title="Note the absolute path">
+    The absolute path to the wallet directory — `/opt/oracle/wallet` in the example above — is what you set as `oracle.wallet.path` in `application.properties`. Ensure the user running the Spring Boot process has read access to all files in that directory.
+  </Step>
+</Steps>
+
+## Configuring kpi-service
+
+Add the following properties to `kpi-service/src/main/resources/application.properties`:
+
+```properties
+oracle.wallet.path=/opt/oracle/wallet
+spring.datasource.url=jdbc:oracle:thin:@botbd_tp?TNS_ADMIN=${oracle.wallet.path}
+spring.datasource.username=your_username
+spring.datasource.password=your_password
+spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
+```
+
+| Property | Description |
+|---|---|
+| `oracle.wallet.path` | Custom property that holds the wallet directory path. Referenced by the JDBC URL via `${oracle.wallet.path}`. |
+| `spring.datasource.url` | JDBC URL using the thin driver. `@botbd_tp` is the TNS alias defined in `tnsnames.ora` inside the wallet. The `TNS_ADMIN` query parameter tells the driver where to find that file. |
+| `spring.datasource.username` | Oracle database username. |
+| `spring.datasource.password` | Oracle database password. |
+| `spring.datasource.driver-class-name` | Oracle JDBC driver class (`ojdbc11`). The `oraclepki`, `osdt_cert`, and `osdt_core` libraries (v21.11.0.0) must also be on the classpath for wallet-based authentication to work. |
+
+## JPA settings
+
+The kpi-service includes three JPA properties:
+
+```properties
+spring.jpa.hibernate.ddl-auto=none
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.OracleDialect
+spring.jpa.show-sql=true
+```
+
+- **`spring.jpa.hibernate.ddl-auto=none`** — Hibernate will not attempt to create, alter, or drop any database objects at startup. The `TAREA` table is pre-existing and managed externally.
+- **`spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.OracleDialect`** — Instructs Hibernate to generate Oracle-compatible SQL syntax (e.g., `ROWNUM`, Oracle date functions).
+- **`spring.jpa.show-sql=true`** — Prints every executed SQL statement to stdout. Useful during development to verify queries; set to `false` in production to avoid log noise.
+
+## Database schema
+
+The kpi-service reads from the `TAREA` table. The table is not managed by Hibernate and must exist before the service starts.
+
+| Column | Java field | Type | Notes |
+|---|---|---|---|
+| `ID_TAREA` | `idTarea` | `NUMBER` | Primary key |
+| `ID_PROYECTO` | `idProyecto` | `NUMBER` | Foreign key to the project |
+| `ID_ESTADO` | `idEstado` | `NUMBER` | Task status; value `4` means completed |
+| `TIEMPO_ESTIMADO` | `tiempoEstimado` | `NUMBER` | Estimated effort (hours) |
+| `TIEMPO_REAL` | `tiempoReal` | `NUMBER` | Actual effort recorded (hours) |
+| `ID_USUARIO` | `idUsuario` | `NUMBER` | Foreign key to the assigned user |
+| `FECHA_LIMITE` | `fechaLimite` | `DATE` | Task deadline |
+
+## Notes
+
+<Note>
+  `ddl-auto=none` means Hibernate will not create or alter any tables on startup. Ensure the `TAREA` table exists in the database before starting kpi-service, or the service will fail when it first executes a query.
+</Note>

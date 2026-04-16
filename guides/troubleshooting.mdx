@@ -1,0 +1,238 @@
+---
+title: "Troubleshoot common OracleTelegramBot issues"
+description: "Fix the most common OracleTelegramBot issues: bot not responding, KPI service unreachable, Oracle DB connection failures, 404 errors, and WAR deployment problems."
+---
+
+This page covers the most common issues encountered when running or deploying OracleTelegramBot Backend, along with the checks and fixes for each. Start with the accordion that matches your symptom.
+
+<AccordionGroup>
+
+  <Accordion title="Bot doesn't respond to messages">
+    The bot appears to receive messages but never replies, or messages are not delivered to the service at all.
+
+    **Likely causes**
+
+    - The Telegram webhook is not registered or was registered with an incorrect URL.
+    - The bot token in `application.properties` does not match the token for the bot you are messaging.
+    - `telegram-service` is not running or has crashed.
+    - The ngrok tunnel has expired or a new ngrok session generated a different URL.
+
+    **Checks**
+
+    Verify the current webhook registration:
+
+    ```bash
+    curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
+    ```
+
+    The response shows the registered URL, the last error message from Telegram, and the count of pending updates. If `url` is empty or points to a stale ngrok address, re-register:
+
+    ```bash
+    curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-host>/api/webhook/telegram"
+    ```
+
+    Confirm `telegram-service` is accepting connections:
+
+    ```bash
+    curl -X POST http://localhost:8081/api/webhook/telegram \
+      -H "Content-Type: application/json" \
+      -d '{"update_id":1}'
+    ```
+
+    A response of `OK` confirms the service is running. If the request is refused, restart the service:
+
+    ```bash
+    cd taskbot-backend/telegram-service
+    ./mvnw spring-boot:run
+    ```
+  </Accordion>
+
+  <Accordion title='"El microservicio de los KPIs no se encuentra disponible"'>
+    The bot replies with this message when `telegram-service` catches an exception while calling `kpi-service` through the Feign client.
+
+    **Likely cause**
+
+    `telegram-service` cannot reach `kpi-service` at the configured URL.
+
+    **Checks**
+
+    1. Open `telegram-service/src/main/resources/application.properties` and verify the value of `kpi.service.url`. It must point to the host and port where `kpi-service` is running:
+
+       ```properties
+       kpi.service.url=http://localhost:8080/api/kpis
+       ```
+
+    2. Confirm `kpi-service` is running and accepting requests:
+
+       ```bash
+       curl http://localhost:8080/actuator/health
+       ```
+
+       A healthy response is `{"status":"UP"}`. If this request fails, start `kpi-service`:
+
+       ```bash
+       cd taskbot-backend/kpi-service
+       ./mvnw spring-boot:run
+       ```
+
+    3. If the two services run on different machines or containers, verify there is no firewall rule blocking traffic from the `telegram-service` host to port 8080 on the `kpi-service` host.
+  </Accordion>
+
+  <Accordion title="kpi-service fails to start: ORA- or connection errors">
+    The service throws an `ORA-` error or a connection exception during startup, usually before the application context finishes loading.
+
+    **Likely causes**
+
+    - `oracle.wallet.path` points to a directory that does not exist or does not contain the wallet files.
+    - The TNS alias `botbd_tp` is not present in `tnsnames.ora` inside the wallet directory.
+    - The database username or password is incorrect.
+
+    **Checks**
+
+    1. Verify the wallet directory exists and contains the expected files:
+
+       ```bash
+       ls /your/wallet/path
+       # Expected: cwallet.sso  ewallet.p12  keystore.jks  ojdbc.properties
+       #           sqlnet.ora   tnsnames.ora  truststore.jks
+       ```
+
+    2. Confirm the TNS alias is present in `tnsnames.ora`:
+
+       ```bash
+       grep botbd_tp /your/wallet/path/tnsnames.ora
+       ```
+
+       If the alias is missing, check your Oracle Cloud console for the correct connection string name and update `spring.datasource.url` accordingly.
+
+    3. Verify the credentials are correct by attempting a direct connection with a SQL client such as `sqlplus` or SQL Developer using the same wallet, username, and password.
+
+    4. Make sure `oracle.wallet.path` in `application.properties` is an **absolute** path, not a relative one.
+  </Accordion>
+
+  <Accordion title="HTTP 404 from KPI endpoints">
+    Requests to the KPI REST endpoints return a 404 response with a JSON error body.
+
+    **What is happening**
+
+    `GlobalExceptionHandler` (annotated with `@RestControllerAdvice`) catches `ResourceNotFoundException` and returns a structured 404 response:
+
+    ```json
+    {
+      "timestamp": "2026-04-16T10:00:00.000+00:00",
+      "message": "No tasks found for project with id 1",
+      "status": 404
+    }
+    ```
+
+    This exception is thrown by `KpiServiceImpl` when no rows are found in the `TAREA` table for the requested project or user ID.
+
+    **Checks**
+
+    1. Verify that project ID 1 has task records in the `TAREA` table. Log in to your Oracle database and run:
+
+       ```sql
+       SELECT COUNT(*) FROM TAREA WHERE ID_PROYECTO = 1;
+       ```
+
+       If the count is zero, insert test data or query an ID that has data.
+
+    2. If you receive a 404 on a valid endpoint path (not a data issue), confirm the `@RequestMapping("/api/kpis")` prefix is included in your request URL. For example, the full path for productivity is:
+
+       ```
+       GET http://localhost:8080/api/kpis/proyecto/1/productivity
+       ```
+  </Accordion>
+
+  <Accordion title="Swagger UI not loading">
+    Navigating to `/swagger-ui.html` returns a 404 or a blank page.
+
+    **Checks**
+
+    1. Confirm the service is running and listening on the expected port. For `kpi-service`:
+
+       ```bash
+       curl http://localhost:8080/actuator/health
+       ```
+
+       For `telegram-service` (no Actuator — check the webhook endpoint instead):
+
+       ```bash
+       curl -X POST http://localhost:8081/api/webhook/telegram \
+         -H "Content-Type: application/json" \
+         -d '{"update_id":1}'
+       ```
+
+    2. Use the correct URL for each service:
+
+       | Service | Swagger UI URL |
+       |---|---|
+       | kpi-service | `http://localhost:8080/swagger-ui.html` |
+       | telegram-service | `http://localhost:8081/swagger-ui.html` |
+
+    3. If `kpi-service` is deployed as a WAR to an external Tomcat under a context path, the Swagger UI URL will include the context path. For example: `http://localhost:8080/kpi-0.0.1-SNAPSHOT/swagger-ui.html`.
+  </Accordion>
+
+  <Accordion title="Port already in use">
+    The service fails to start with an error such as `Web server failed to start. Port 8080 was already in use.`
+
+    **Default ports**
+
+    - `kpi-service` — **8080**
+    - `telegram-service` — **8081**
+
+    **Resolution**
+
+    Override the port in `application.properties`:
+
+    ```properties
+    server.port=9090
+    ```
+
+    Or pass it as a JVM argument at startup:
+
+    ```bash
+    java -jar target/kpi-0.0.1-SNAPSHOT.war -Dserver.port=9090
+    ```
+
+    Or as a Spring Boot argument:
+
+    ```bash
+    ./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=9090
+    ```
+
+    If you change the port of `kpi-service`, remember to update `kpi.service.url` in `telegram-service/application.properties` to match.
+  </Accordion>
+
+  <Accordion title="WAR deployment to Tomcat fails">
+    Deploying `kpi-0.0.1-SNAPSHOT.war` to an external Tomcat server results in a deployment error or the application context fails to start.
+
+    **Likely causes**
+
+    - Tomcat version is not compatible with the Jakarta EE namespace used by Spring Boot 3+ (including the 4.0.5 branch).
+    - `ServletInitializer` does not extend `SpringBootServletInitializer`.
+
+    **Checks**
+
+    1. Verify your Tomcat version. Spring Boot 3.x requires **Tomcat 10.x or later** because it moved from the `javax.servlet` namespace to `jakarta.servlet`. Tomcat 9.x and earlier use the old `javax.servlet` namespace and are not compatible.
+
+       ```bash
+       # Check Tomcat version
+       catalina.sh version
+       ```
+
+    2. Confirm `ServletInitializer` in `kpi-service` extends `SpringBootServletInitializer` and overrides `configure`:
+
+       ```java
+       public class ServletInitializer extends SpringBootServletInitializer {
+           @Override
+           protected SpringApplicationBuilder configure(SpringApplicationBuilder application) {
+               return application.sources(KpiApplication.class);
+           }
+       }
+       ```
+
+    3. Check Tomcat's `logs/catalina.out` for the full stack trace after a failed deployment. Common errors include `ClassNotFoundException` for Jakarta classes (Tomcat version mismatch) or missing datasource configuration (wallet path not accessible from the Tomcat process user).
+  </Accordion>
+
+</AccordionGroup>
